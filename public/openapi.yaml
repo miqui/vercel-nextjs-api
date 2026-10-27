@@ -613,6 +613,7 @@ components:
           type: string
           format: uri
           maxLength: 2048
+          pattern: "^[hH][tT][tT][pP][sS]?://"
           examples: [https://vercel.com/docs]
         code:
           $ref: "#/components/schemas/Code"
