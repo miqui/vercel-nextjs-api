@@ -1,0 +1,685 @@
+openapi: 3.2.0
+$self: https://vercel-nextjs-api.vercel.app/openapi.yaml
+
+info:
+  title: Link Shortener API
+  version: 1.0.0
+  summary: Shorten URLs, redirect visitors and count clicks.
+  description: |
+    A URL shortener REST API. Clients create an API key, use it to create short links,
+    and read click counts for the links they own. Visiting a short link redirects to the
+    original URL and counts the click.
+
+    **Authentication.** Every `/api/links` operation needs an API key, sent as
+    `Authorization: Bearer <key>` (preferred) or `X-API-Key: <key>`. Keys are issued by
+    `POST /api/keys`, shown once, and stored only as SHA-256 hashes. A key can see and
+    manage only the links it created; other keys' links look like they don't exist (`404`).
+
+    **Rate limits.** Limits apply per API key (or per client IP for key creation) over a
+    sliding window. Responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
+    `X-RateLimit-Reset`. Over the limit, the API answers `429` with `Retry-After`.
+
+    | Policy | Applies to | Limit |
+    | --- | --- | --- |
+    | createKey | `POST /api/keys`, per client IP | 5 per hour |
+    | createLink | `POST /api/links`, per API key | 30 per minute |
+    | manage | other `/api/links` operations, per API key | 120 per minute |
+
+    **Errors.** Error responses use the envelope `{ "error": { "code", "message" } }`,
+    where `code` is a stable machine-readable value and `message` is for humans.
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: https://vercel-nextjs-api.vercel.app
+    name: production
+    description: Production deployment on Vercel.
+  - url: http://localhost:3000
+    name: local
+    description: Local `npm run dev`. Uses an in-memory store when Redis isn't configured.
+
+externalDocs:
+  description: Source code and README with usage examples
+  url: https://github.com/miqui/vercel-nextjs-api
+
+tags:
+  - name: Link Shortening
+    summary: Link Shortening
+    description: Create short links that redirect to long URLs, and track their usage.
+    kind: nav
+  - name: API Keys
+    summary: API keys
+    description: Issue the credentials used to create and manage links.
+    parent: Link Shortening
+  - name: Links
+    summary: Links
+    description: Create, list, inspect and delete the short links owned by an API key.
+    parent: Link Shortening
+  - name: Redirects
+    summary: Redirects
+    description: Public short URLs that redirect visitors and count clicks.
+    parent: Link Shortening
+
+paths:
+  /api/keys:
+    post:
+      operationId: createApiKey
+      summary: Create an API key
+      description: |
+        Issues a new API key. The plaintext key appears only in this response, so store it
+        right away. The request body is optional; a missing or unparseable body gives the
+        key the name `default`. Rate limited to 5 keys per hour per client IP.
+      tags: [API Keys]
+      security: []
+      x-idempotent: false
+      x-side-effects: Stores a new API key record.
+      requestBody:
+        required: false
+        description: Optional label for the key.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiKeyRequest"
+            examples:
+              named:
+                summary: Key with a name
+                dataValue:
+                  name: my-cli
+      responses:
+        "201":
+          summary: Key created
+          description: The new key and its metadata. The `key` value is never returned again.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyCreated"
+              examples:
+                created:
+                  summary: Newly issued key
+                  dataValue:
+                    key: sk_3hT9xQ2mVb7LkP4nW8cR1sY6fJ0dZ5aE
+                    id: key_8f3a2c1d9e7b6a54
+                    name: my-cli
+                    createdAt: "2026-10-27T19:30:00.000Z"
+                    note: Store this key now. It cannot be shown again.
+        "400":
+          summary: Invalid name
+          description: The `name` is empty or longer than 64 characters.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                emptyName:
+                  summary: Empty name
+                  dataValue:
+                    error:
+                      code: bad_request
+                      message: "✖ Too small: expected string to have >=1 characters\n  → at name"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/links:
+    get:
+      operationId: listLinks
+      summary: List your links
+      description: |
+        Returns every link created with the calling API key, newest first, each with its
+        current click count. Not paginated. Rate limited by the `manage` policy.
+      tags: [Links]
+      x-idempotent: true
+      x-side-effects: none
+      responses:
+        "200":
+          summary: Links owned by the key
+          description: The caller's links, newest first. Empty when the key has none.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkList"
+              examples:
+                twoLinks:
+                  summary: Two links
+                  dataValue:
+                    links:
+                      - code: Xk9pQ2r
+                        url: https://nextjs.org/docs/app
+                        ownerId: key_8f3a2c1d9e7b6a54
+                        createdAt: "2026-10-27T19:35:00.000Z"
+                        clicks: 0
+                        shortUrl: https://vercel-nextjs-api.vercel.app/Xk9pQ2r
+                      - code: docs
+                        url: https://vercel.com/docs
+                        ownerId: key_8f3a2c1d9e7b6a54
+                        createdAt: "2026-10-27T19:31:00.000Z"
+                        clicks: 2
+                        shortUrl: https://vercel-nextjs-api.vercel.app/docs
+                empty:
+                  summary: No links yet
+                  dataValue:
+                    links: []
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      operationId: createLink
+      summary: Create a short link
+      description: |
+        Shortens an `http` or `https` URL. Pass `code` to choose the short code; otherwise a
+        random 7-character code is generated. Codes are unique across all users, so a custom
+        code that's already taken returns `409`. URLs on this API's own domain are rejected to
+        prevent redirect loops. Rate limited by the `createLink` policy.
+      tags: [Links]
+      x-idempotent: false
+      x-side-effects: Stores a new link owned by the calling API key.
+      requestBody:
+        required: true
+        description: The URL to shorten and an optional custom code.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLinkRequest"
+            examples:
+              customCode:
+                summary: With a custom code
+                dataValue:
+                  url: https://vercel.com/docs
+                  code: docs
+              generatedCode:
+                summary: With a generated code
+                dataValue:
+                  url: https://nextjs.org/docs/app
+      responses:
+        "201":
+          summary: Link created
+          description: The new link, with its public short URL.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+              examples:
+                customCode:
+                  summary: Custom code
+                  dataValue:
+                    code: docs
+                    url: https://vercel.com/docs
+                    ownerId: key_8f3a2c1d9e7b6a54
+                    createdAt: "2026-10-27T19:31:00.000Z"
+                    clicks: 0
+                    shortUrl: https://vercel-nextjs-api.vercel.app/docs
+                generatedCode:
+                  summary: Generated code
+                  dataValue:
+                    code: Xk9pQ2r
+                    url: https://nextjs.org/docs/app
+                    ownerId: key_8f3a2c1d9e7b6a54
+                    createdAt: "2026-10-27T19:35:00.000Z"
+                    clicks: 0
+                    shortUrl: https://vercel-nextjs-api.vercel.app/Xk9pQ2r
+        "400":
+          summary: Invalid request
+          description: |
+            The body is missing or malformed, the URL isn't a valid `http`/`https` URL (or is
+            longer than 2048 characters, or points at this domain), or the code is invalid or
+            reserved.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalidUrl:
+                  summary: Not an http(s) URL
+                  dataValue:
+                    error:
+                      code: bad_request
+                      message: "✖ Invalid URL\n  → at url"
+                invalidCode:
+                  summary: Code too short
+                  dataValue:
+                    error:
+                      code: bad_request
+                      message: "✖ Code must be 3-32 characters: letters, digits, '-' or '_'.\n  → at code"
+                ownDomain:
+                  summary: URL on this domain
+                  dataValue:
+                    error:
+                      code: bad_request
+                      message: Cannot shorten a URL on this domain.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          summary: Code already taken
+          description: The custom `code` is already used by a link (yours or someone else's).
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                taken:
+                  summary: Code in use
+                  dataValue:
+                    error:
+                      code: conflict
+                      message: The code "docs" is already taken.
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/links/{code}:
+    parameters:
+      - $ref: "#/components/parameters/Code"
+    get:
+      operationId: getLink
+      summary: Get a link and its clicks
+      description: |
+        Returns one of the caller's links with its click count. Links owned by other keys
+        return `404`, the same as codes that don't exist. Rate limited by the `manage` policy.
+      tags: [Links]
+      x-idempotent: true
+      x-side-effects: none
+      responses:
+        "200":
+          summary: The link
+          description: The link and its current click count.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+              examples:
+                clicked:
+                  summary: Link clicked twice
+                  dataValue:
+                    code: docs
+                    url: https://vercel.com/docs
+                    ownerId: key_8f3a2c1d9e7b6a54
+                    createdAt: "2026-10-27T19:31:00.000Z"
+                    clicks: 2
+                    shortUrl: https://vercel-nextjs-api.vercel.app/docs
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    delete:
+      operationId: deleteLink
+      summary: Delete a link
+      description: |
+        Permanently deletes one of the caller's links and its click count. The short URL
+        returns `404` afterwards and the code becomes available again. Deleting a link that
+        doesn't exist or belongs to another key returns `404`. Rate limited by the `manage`
+        policy.
+      tags: [Links]
+      x-idempotent: true
+      x-side-effects: Deletes the link and its click count permanently.
+      responses:
+        "204":
+          summary: Link deleted
+          description: The link was deleted. No body.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /{code}:
+    parameters:
+      - $ref: "#/components/parameters/Code"
+    get:
+      operationId: followShortLink
+      summary: Follow a short link
+      description: |
+        Redirects to the link's URL with `307 Temporary Redirect` and counts the click.
+        The redirect is temporary and marked `no-store` so browsers don't cache it and
+        every visit is counted. Public: no API key, no rate limit.
+      tags: [Redirects]
+      security: []
+      x-idempotent: false
+      x-side-effects: Increments the link's click count.
+      responses:
+        "307":
+          summary: Redirect to the URL
+          description: Temporary redirect to the original URL. No body.
+          headers:
+            Location:
+              description: The original URL.
+              required: true
+              schema:
+                type: string
+                format: uri
+              example: https://vercel.com/docs
+            Cache-Control:
+              description: Always `no-store`, so every visit reaches the server and is counted.
+              required: true
+              schema:
+                type: string
+                const: no-store
+        "404":
+          $ref: "#/components/responses/NotFoundPublic"
+
+components:
+  securitySchemes:
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "Preferred. Send `Authorization: Bearer <key>` with a key from `POST /api/keys`."
+    headerApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: "Alternative to the bearer header: `X-API-Key: <key>`."
+
+  parameters:
+    Code:
+      name: code
+      in: path
+      required: true
+      description: The link's short code, as in `https://vercel-nextjs-api.vercel.app/{code}`. Case-sensitive.
+      schema:
+        $ref: "#/components/schemas/Code"
+      example: docs
+
+  headers:
+    X-RateLimit-Limit:
+      description: Requests allowed in the current window for this policy.
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+      example: 120
+    X-RateLimit-Remaining:
+      description: Requests left in the current window.
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+      example: 119
+    X-RateLimit-Reset:
+      description: Unix time, in seconds, when the window resets.
+      required: true
+      schema:
+        type: integer
+      example: 1793129460
+    Retry-After:
+      description: Seconds to wait before retrying.
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+      example: 42
+
+  responses:
+    Unauthorized:
+      summary: Missing or invalid API key
+      description: No API key was sent, or it isn't a valid key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            missing:
+              summary: No key sent
+              dataValue:
+                error:
+                  code: unauthorized
+                  message: "Missing API key. Send `Authorization: Bearer <key>`."
+            invalid:
+              summary: Unknown key
+              dataValue:
+                error:
+                  code: unauthorized
+                  message: Invalid API key.
+    NotFound:
+      summary: Link not found
+      description: No link with this code exists, or it belongs to another API key.
+      headers:
+        X-RateLimit-Limit:
+          $ref: "#/components/headers/X-RateLimit-Limit"
+        X-RateLimit-Remaining:
+          $ref: "#/components/headers/X-RateLimit-Remaining"
+        X-RateLimit-Reset:
+          $ref: "#/components/headers/X-RateLimit-Reset"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            notFound:
+              summary: Unknown or not yours
+              dataValue:
+                error:
+                  code: not_found
+                  message: Link not found.
+    NotFoundPublic:
+      summary: Short link not found
+      description: No link with this code exists (it may have been deleted).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            notFound:
+              summary: Unknown code
+              dataValue:
+                error:
+                  code: not_found
+                  message: Link not found.
+    RateLimited:
+      summary: Rate limit exceeded
+      description: Too many requests in the current window. Wait `Retry-After` seconds.
+      headers:
+        X-RateLimit-Limit:
+          $ref: "#/components/headers/X-RateLimit-Limit"
+        X-RateLimit-Remaining:
+          $ref: "#/components/headers/X-RateLimit-Remaining"
+        X-RateLimit-Reset:
+          $ref: "#/components/headers/X-RateLimit-Reset"
+        Retry-After:
+          $ref: "#/components/headers/Retry-After"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            rateLimited:
+              summary: Over the limit
+              dataValue:
+                error:
+                  code: rate_limited
+                  message: Too many requests. Try again later.
+
+  schemas:
+    Code:
+      title: Short code
+      description: |
+        3-32 characters: letters, digits, `-` or `_`. Generated codes are 7 letters and
+        digits. `api`, `_next`, `favicon.ico`, `robots.txt` and `sitemap.xml` are reserved
+        (case-insensitive).
+      type: string
+      pattern: "^[A-Za-z0-9_-]{3,32}$"
+      examples: [docs, Xk9pQ2r]
+
+    CreateApiKeyRequest:
+      title: Create API key request
+      description: Optional settings for a new API key.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          description: Label to recognize the key by. Leading and trailing spaces are trimmed.
+          type: string
+          minLength: 1
+          maxLength: 64
+          default: default
+          examples: [my-cli]
+
+    ApiKeyCreated:
+      title: Created API key
+      description: A newly issued API key. `key` is the secret and is only ever returned here.
+      type: object
+      required: [key, id, name, createdAt, note]
+      properties:
+        key:
+          description: The secret API key. Send it as a bearer token. It can't be retrieved again.
+          type: string
+          pattern: "^sk_[A-Za-z0-9_-]{32}$"
+          examples: [sk_3hT9xQ2mVb7LkP4nW8cR1sY6fJ0dZ5aE]
+        id:
+          description: Public identifier of the key. Appears as `ownerId` on its links.
+          type: string
+          pattern: "^key_[0-9a-f]{16}$"
+          examples: [key_8f3a2c1d9e7b6a54]
+        name:
+          description: The key's label.
+          type: string
+          examples: [my-cli]
+        createdAt:
+          description: When the key was created.
+          type: string
+          format: date-time
+        note:
+          description: Reminder that the key is shown only once.
+          type: string
+
+    CreateLinkRequest:
+      title: Create link request
+      description: A URL to shorten, with an optional custom code.
+      type: object
+      required: [url]
+      properties:
+        url:
+          description: |
+            The destination. Must be an `http` or `https` URL of at most 2048 characters, and
+            not on this API's own domain.
+          type: string
+          format: uri
+          maxLength: 2048
+          examples: [https://vercel.com/docs]
+        code:
+          $ref: "#/components/schemas/Code"
+          description: Custom short code. Omit it to get a random 7-character code.
+
+    Link:
+      title: Link
+      description: A short link and its click count.
+      type: object
+      required: [code, url, ownerId, createdAt, clicks, shortUrl]
+      properties:
+        code:
+          $ref: "#/components/schemas/Code"
+        url:
+          description: The destination URL.
+          type: string
+          format: uri
+          examples: [https://vercel.com/docs]
+        ownerId:
+          description: The `id` of the API key that created the link.
+          type: string
+          examples: [key_8f3a2c1d9e7b6a54]
+        createdAt:
+          description: When the link was created.
+          type: string
+          format: date-time
+        clicks:
+          description: Number of times the short URL has been visited.
+          type: integer
+          minimum: 0
+        shortUrl:
+          description: The public short URL that redirects to `url`.
+          type: string
+          format: uri
+          examples: [https://vercel-nextjs-api.vercel.app/docs]
+
+    LinkList:
+      title: Link list
+      description: All links owned by the calling API key, newest first.
+      type: object
+      required: [links]
+      properties:
+        links:
+          description: The links, newest first.
+          type: array
+          items:
+            $ref: "#/components/schemas/Link"
+
+    Error:
+      title: Error
+      description: Error envelope returned by every failing operation.
+      type: object
+      required: [error]
+      properties:
+        error:
+          description: Details of the error.
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              description: Stable, machine-readable error code. Branch on this, not on `message`.
+              type: string
+              enum: [bad_request, unauthorized, not_found, conflict, rate_limited, internal_error]
+            message:
+              description: Human-readable explanation. Wording may change.
+              type: string
+
+security:
+  - bearerApiKey: []
+  - headerApiKey: []
