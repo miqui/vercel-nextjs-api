@@ -2,7 +2,10 @@
 
 A URL shortener REST API built with Next.js route handlers, with API keys and rate limiting. Data lives in Upstash Redis.
 
-## API
+- **Live API:** https://vercel-nextjs-api.vercel.app
+- **OpenAPI 3.2 spec:** [`public/openapi.yaml`](public/openapi.yaml), served at https://vercel-nextjs-api.vercel.app/openapi.yaml
+
+## Endpoints
 
 | Method   | Path               | Auth    | Rate limit        | Description                             |
 | -------- | ------------------ | ------- | ----------------- | --------------------------------------- |
@@ -13,28 +16,246 @@ A URL shortener REST API built with Next.js route handlers, with API keys and ra
 | `DELETE` | `/api/links/:code` | API key | 120 / min per key | Delete one of your links                |
 | `GET`    | `/:code`           | none    | none              | `307` redirect to the URL, counts click |
 
-Send the key as `Authorization: Bearer <key>` or `X-API-Key: <key>`. Keys are shown once and stored only as SHA-256 hashes.
+## Usage
 
-Rate-limited responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`; over the limit you get `429` with `Retry-After`. Errors have the shape `{ "error": { "code", "message" } }`.
+The examples use the production URL. For local development, set `BASE=http://localhost:3000`. Responses are shown formatted; the API returns compact JSON.
 
 ```sh
-KEY=$(curl -s -X POST localhost:3000/api/keys | jq -r .key)
-curl -s -X POST localhost:3000/api/links -H "Authorization: Bearer $KEY" \
-  -H 'Content-Type: application/json' -d '{"url":"https://vercel.com/docs","code":"docs"}'
-curl -i localhost:3000/docs
+BASE=https://vercel-nextjs-api.vercel.app
 ```
+
+### 1. Create an API key
+
+```sh
+curl -X POST $BASE/api/keys \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"my-cli"}'
+```
+
+`201 Created`
+
+```json
+{
+  "key": "sk_3hT9xQ2mVb7LkP4nW8cR1sY6fJ0dZ5aE",
+  "id": "key_8f3a2c1d9e7b6a54",
+  "name": "my-cli",
+  "createdAt": "2026-10-27T19:30:00.000Z",
+  "note": "Store this key now. It cannot be shown again."
+}
+```
+
+The `key` is shown only once; the server stores just its hash. The body is optional: without it, the key is named `default`. Save the key for the next steps:
+
+```sh
+KEY=$(curl -s -X POST $BASE/api/keys -H 'Content-Type: application/json' -d '{"name":"my-cli"}' | jq -r .key)
+```
+
+Send it on every `/api/links` request as `Authorization: Bearer $KEY` (or `X-API-Key: $KEY`).
+
+### 2. Shorten a URL
+
+With a custom code:
+
+```sh
+curl -X POST $BASE/api/links \
+  -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://vercel.com/docs","code":"docs"}'
+```
+
+`201 Created`
+
+```json
+{
+  "code": "docs",
+  "url": "https://vercel.com/docs",
+  "ownerId": "key_8f3a2c1d9e7b6a54",
+  "createdAt": "2026-10-27T19:31:00.000Z",
+  "clicks": 0,
+  "shortUrl": "https://vercel-nextjs-api.vercel.app/docs"
+}
+```
+
+Leave out `code` to get a random 7-character one:
+
+```sh
+curl -X POST $BASE/api/links \
+  -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://nextjs.org/docs/app"}'
+```
+
+`201 Created`
+
+```json
+{
+  "code": "Xk9pQ2r",
+  "url": "https://nextjs.org/docs/app",
+  "ownerId": "key_8f3a2c1d9e7b6a54",
+  "createdAt": "2026-10-27T19:35:00.000Z",
+  "clicks": 0,
+  "shortUrl": "https://vercel-nextjs-api.vercel.app/Xk9pQ2r"
+}
+```
+
+Rules:
+
+- `url` must be `http` or `https`, at most 2048 characters, and not on this API's own domain.
+- `code` is 3–32 letters, digits, `-` or `_`, and case-sensitive. `api`, `_next`, `favicon.ico`, `robots.txt` and `sitemap.xml` are reserved.
+- Codes are unique across all users. A taken code returns `409`.
+
+### 3. Follow the short link
+
+```sh
+curl -i $BASE/docs
+```
+
+```http
+HTTP/2 307
+location: https://vercel.com/docs
+cache-control: no-store
+```
+
+Each visit counts as a click. The redirect is temporary and uncached so that every visit reaches the server.
+
+### 4. List your links
+
+```sh
+curl $BASE/api/links -H "Authorization: Bearer $KEY"
+```
+
+`200 OK`. Newest first, and only links created with this key:
+
+```json
+{
+  "links": [
+    {
+      "code": "Xk9pQ2r",
+      "url": "https://nextjs.org/docs/app",
+      "ownerId": "key_8f3a2c1d9e7b6a54",
+      "createdAt": "2026-10-27T19:35:00.000Z",
+      "clicks": 0,
+      "shortUrl": "https://vercel-nextjs-api.vercel.app/Xk9pQ2r"
+    },
+    {
+      "code": "docs",
+      "url": "https://vercel.com/docs",
+      "ownerId": "key_8f3a2c1d9e7b6a54",
+      "createdAt": "2026-10-27T19:31:00.000Z",
+      "clicks": 2,
+      "shortUrl": "https://vercel-nextjs-api.vercel.app/docs"
+    }
+  ]
+}
+```
+
+### 5. Get one link's clicks
+
+```sh
+curl $BASE/api/links/docs -H "Authorization: Bearer $KEY"
+```
+
+`200 OK`
+
+```json
+{
+  "code": "docs",
+  "url": "https://vercel.com/docs",
+  "ownerId": "key_8f3a2c1d9e7b6a54",
+  "createdAt": "2026-10-27T19:31:00.000Z",
+  "clicks": 2,
+  "shortUrl": "https://vercel-nextjs-api.vercel.app/docs"
+}
+```
+
+Links created with a different key return `404`, the same as codes that don't exist.
+
+### 6. Delete a link
+
+```sh
+curl -X DELETE $BASE/api/links/docs -H "Authorization: Bearer $KEY"
+```
+
+`204 No Content`. The short URL returns `404` afterwards and the code can be reused.
+
+## Rate limits
+
+| Policy     | Applies to                                 | Limit          |
+| ---------- | ------------------------------------------ | -------------- |
+| createKey  | `POST /api/keys`, per client IP            | 5 per hour     |
+| createLink | `POST /api/links`, per API key             | 30 per minute  |
+| manage     | other `/api/links` operations, per API key | 120 per minute |
+
+Rate-limited responses carry these headers:
+
+```http
+x-ratelimit-limit: 120
+x-ratelimit-remaining: 119
+x-ratelimit-reset: 1793129460
+```
+
+`x-ratelimit-reset` is a Unix time in seconds. Over the limit you get `429` with `Retry-After` (seconds):
+
+```http
+HTTP/2 429
+retry-after: 42
+```
+
+```json
+{ "error": { "code": "rate_limited", "message": "Too many requests. Try again later." } }
+```
+
+## Errors
+
+Every error has the same shape. Branch on `error.code`; `message` is for humans and its wording may change.
+
+| Status | `error.code`   | When                                         | Example `message`                                        |
+| ------ | -------------- | -------------------------------------------- | -------------------------------------------------------- |
+| `400`  | `bad_request`  | Invalid or missing body, URL or code         | `✖ Invalid URL\n  → at url`                              |
+| `401`  | `unauthorized` | No API key, or an invalid one                | ``Missing API key. Send `Authorization: Bearer <key>`.`` |
+| `404`  | `not_found`    | Unknown code, or a link owned by another key | `Link not found.`                                        |
+| `409`  | `conflict`     | Custom code already taken                    | `The code "docs" is already taken.`                      |
+| `429`  | `rate_limited` | Rate limit exceeded                          | `Too many requests. Try again later.`                    |
+
+For example, shortening a non-HTTP URL:
+
+```sh
+curl -X POST $BASE/api/links \
+  -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"javascript:alert(1)"}'
+```
+
+`400 Bad Request`
+
+```json
+{ "error": { "code": "bad_request", "message": "✖ Invalid URL\n  → at url" } }
+```
+
+## OpenAPI spec
+
+[`public/openapi.yaml`](public/openapi.yaml) is an OpenAPI 3.2 description of the API, with the same examples as above. Use it to generate clients, import into API tools, or give to AI agents.
+
+```sh
+npm run lint:openapi                            # validate the spec and its examples
+npx @redocly/cli preview -d public/openapi.yaml # browse it as interactive docs
+```
+
+`test/openapi.test.ts` fails if the spec's paths, methods, rate limits or error codes drift from the code.
 
 ## Development
 
 ```sh
 npm install
 npm run dev     # uses an in-memory store when Redis isn't configured
-npm run check   # format, lint, typecheck, tests with coverage thresholds
+npm run check   # format, lint, OpenAPI lint, typecheck, tests with coverage thresholds
 ```
 
-To use Redis locally, pull the project's environment variables with `vercel env pull .env.local`. The app reads `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL`/`KV_REST_API_TOKEN`. In production it refuses to start without them.
+The app reads `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL`/`KV_REST_API_TOKEN`. In production, API requests fail with an error if they're missing.
+
+> **Careful:** `vercel env pull .env.local` (and installing the Upstash integration) writes the **production** Redis credentials to `.env.local`, and `npm run dev` loads that file. Local requests then read and write production data. Remove the `KV_*` lines from `.env.local` to go back to the in-memory store. Tests always use the in-memory store.
 
 ## CI/CD
 
-- **CI** (`.github/workflows/ci.yml`): Prettier, ESLint (zero warnings), TypeScript, Vitest with coverage thresholds, production build, `npm audit`, dependency review on PRs and CodeQL.
-- **CD**: Vercel's Git integration deploys every push to `main` to production and every PR to a preview URL. Protect `main` so merges require the CI checks to pass.
+- **CI** (`.github/workflows/ci.yml`): Prettier, ESLint (zero warnings), OpenAPI lint, TypeScript, Vitest with coverage thresholds, production build, `npm audit`, dependency review on PRs and CodeQL.
+- **CD**: Vercel's Git integration deploys every merge to `main` to production and every PR to a preview URL. `main` is protected: changes go through PRs, and merging requires the CI checks to pass.

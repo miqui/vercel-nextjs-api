@@ -1,0 +1,14 @@
+extends:
+  - recommended
+
+rules:
+  # Every example must match its schema.
+  no-invalid-media-type-examples:
+    severity: error
+    allowAdditionalProperties: false
+  no-invalid-schema-examples: error
+  operation-4xx-response: error
+  # The `local` server is intentionally localhost.
+  no-server-example.com: off
+  # GET /{code} only redirects (307); it has no 2xx response by design.
+  operation-2xx-response: off

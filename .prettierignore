@@ -3,3 +3,6 @@ coverage
 node_modules
 package-lock.json
 next-env.d.ts
+.agents
+.claude
+skills-lock.json
