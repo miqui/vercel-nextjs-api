@@ -278,15 +278,119 @@ vercel traces search --status error
 
 ```sh
 npm install
-npm run dev     # uses an in-memory store when Redis isn't configured
-npm run check   # format, lint, OpenAPI lint, typecheck, tests with coverage thresholds
+npm run dev          # uses an in-memory store when Redis isn't configured
+npm run dev:memory   # always uses the in-memory store, even if .env.local has Redis credentials
+npm run check        # format, lint, OpenAPI lint, typecheck, tests with coverage thresholds
 ```
 
 The app reads `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL`/`KV_REST_API_TOKEN`. In production, API requests fail with an error if they're missing.
 
 > **Careful:** `vercel env pull .env.local` (and installing the Upstash integration) writes the **production** Redis credentials to `.env.local`, and `npm run dev` loads that file. Local requests then read and write production data. Remove the `KV_*` lines from `.env.local` to go back to the in-memory store. Tests always use the in-memory store.
 
+## Deploy from scratch
+
+Sets up a new Vercel project and a new, empty Redis database, then deploys to production. Everything here fits in Vercel's Hobby plan and Upstash's Free plan, so it costs nothing.
+
+**Prerequisites:** Node.js 24 (see `.nvmrc`), the [Vercel CLI](https://vercel.com/docs/cli) (`npm i -g vercel`) and a Vercel account.
+
+1. **Get the code and log in.**
+
+   ```sh
+   git clone https://github.com/miqui/vercel-nextjs-api.git
+   cd vercel-nextjs-api
+   npm ci
+   vercel login
+   ```
+
+2. **Optional: deploy only from the CLI.** By default, linking connects the GitHub repo, and every merge to `main` deploys to production. To deploy only with `vercel deploy`, create a `vercel.json` before linking:
+
+   ```json
+   { "git": { "deploymentEnabled": false } }
+   ```
+
+3. **Create and link the Vercel project.**
+
+   ```sh
+   rm -rf .vercel                                   # drop any link to an old or deleted project
+   vercel link --yes --project vercel-nextjs-api
+   ```
+
+   The production URL is `https://<project-name>.vercel.app`. If connecting the GitHub repo fails, give the [Vercel GitHub App](https://github.com/apps/vercel/installations/new) access to the repo, then run `vercel git connect`.
+
+4. **Create the Redis database (free plan) and connect it to the project.**
+
+   ```sh
+   vercel integration add upstash/upstash-kv --billing-plan free --name link-shortener-redis
+   ```
+
+   The first time on a Vercel team, this stops and prints a link to accept Upstash's terms in the browser. Accept them, then run the same command again. It also writes the database credentials to `.env.local` (see the warning under [Development](#development)).
+
+   Check the credentials are on the project (values stay hidden):
+
+   ```sh
+   vercel env ls   # expect KV_REST_API_URL and KV_REST_API_TOKEN
+   ```
+
+5. **Deploy to production.**
+
+   ```sh
+   vercel deploy --prod
+   ```
+
+6. **Smoke test.**
+
+   ```sh
+   BASE=https://vercel-nextjs-api.vercel.app
+   KEY=$(curl -s -X POST $BASE/api/keys | jq -r .key)
+   curl -s -X POST $BASE/api/links -H "Authorization: Bearer $KEY" \
+     -H 'Content-Type: application/json' -d '{"url":"https://vercel.com/docs","code":"docs"}'
+   curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' $BASE/docs   # 307 -> https://vercel.com/docs
+   ```
+
+   If the API returns `500`, the Redis credentials are missing from the deployment: check step 4, then run `vercel deploy --prod` again.
+
+**Taking it offline without deleting anything:** `vercel project pause vercel-nextjs-api` makes every URL return `503` and blocks new builds; `vercel project resume vercel-nextjs-api` brings it back. Data, settings and the Git connection are kept.
+
+## Tear down everything
+
+Deletes the deployment, its data and settings. **Steps 1 and 2 are permanent**: all links, click counts and API keys are lost, and old short URLs stop working.
+
+1. **Delete the Redis database.** Do this first, while it's still attached to the project.
+
+   ```sh
+   vercel integration resource delete link-shortener-redis --disconnect-all
+   ```
+
+   Or in the dashboard: your team → **Storage** → **link-shortener-redis** → **Settings** → delete.
+
+2. **Delete the Vercel project.** This removes all deployments, logs, traces, environment variables, the Git connection and the `*.vercel.app` URL.
+
+   ```sh
+   vercel project delete vercel-nextjs-api
+   ```
+
+3. **Optional: uninstall Upstash from the Vercel team.** Only possible once its databases are deleted. Leaving it installed costs nothing and skips accepting the terms next time.
+
+   ```sh
+   vercel integration remove upstash
+   ```
+
+4. **Clean up locally.** `.env.local` holds the deleted database's credentials.
+
+   ```sh
+   rm -rf .vercel .env.local
+   ```
+
+5. **Check nothing is left.**
+
+   ```sh
+   vercel project ls                                        # vercel-nextjs-api is gone
+   vercel integration resource inspect link-shortener-redis # "No resource ... found"
+   ```
+
+The GitHub repo, its CI and branch protection aren't touched. To delete the repo as well, which is permanent, run `gh repo delete miqui/vercel-nextjs-api` (needs the `delete_repo` scope: `gh auth refresh -s delete_repo`).
+
 ## CI/CD
 
-- **CI** (`.github/workflows/ci.yml`): Prettier, ESLint (zero warnings), OpenAPI lint, TypeScript, Vitest with coverage thresholds, production build, `npm audit`, dependency review on PRs and CodeQL.
-- **CD**: Vercel's Git integration deploys every merge to `main` to production and every PR to a preview URL. `main` is protected: changes go through PRs, and merging requires the CI checks to pass.
+- **CI** (`.github/workflows/ci.yml`): Prettier, ESLint (zero warnings), OpenAPI lint, TypeScript, Vitest with coverage thresholds, production build, the k6 examples suite, `npm audit`, dependency review on PRs and CodeQL.
+- **CD**: Vercel's Git integration deploys every merge to `main` to production and every PR to a preview URL, unless `vercel.json` turns Git deploys off (see [Deploy from scratch](#deploy-from-scratch)). `main` is protected: changes go through PRs, and merging requires the CI checks to pass.
