@@ -243,6 +243,19 @@ npx @redocly/cli preview -d public/openapi.yaml # browse it as interactive docs
 
 `test/openapi.test.ts` fails if the spec's paths, methods, rate limits or error codes drift from the code.
 
+### Checking every example against a running API (k6)
+
+[`k6/examples.js`](k6/examples.js) sends a request for every example in the spec (request bodies, success responses and every error example) and checks that the status and body match the example exactly. Only values that change per run (keys, IDs, timestamps, generated codes, host) are compared by format. It fails if an example in the spec has no matching scenario, so new examples must be tested. CI runs it on every PR.
+
+Requires [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) (`brew install k6`):
+
+```sh
+npm run dev:memory   # terminal 1: dev server forced onto the in-memory store
+npm run test:k6      # terminal 2: BASE_URL defaults to http://localhost:3000
+```
+
+The suite writes data and deliberately uses up rate limits, so it refuses to run against production. `dev:memory` ignores the Redis credentials in `.env.local`, so it never touches production data.
+
 ## Development
 
 ```sh

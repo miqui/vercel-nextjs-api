@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 import { GET as redirect } from "@/app/[code]/route";
 import { POST as createKey } from "@/app/api/keys/route";
@@ -12,8 +13,8 @@ async function newKey(ip = "203.0.113.1"): Promise<string> {
   return (await res.json()).key;
 }
 
-async function shorten(key: string, body: unknown) {
-  return createLink(request("POST", "/api/links", { key, body }));
+async function shorten(key: string, body: unknown, headers?: Record<string, string>) {
+  return createLink(request("POST", "/api/links", { key, body, headers }));
 }
 
 describe("POST /api/keys", () => {
@@ -115,8 +116,37 @@ describe("POST /api/links", () => {
   });
 
   it("refuses to shorten its own domain", async () => {
-    const res = await shorten(await newKey(), { url: "http://localhost:3000/abc1234" });
+    // The host needs a dot: URLs on bare hosts like localhost fail URL validation first.
+    const key = await newKey();
+    const res = await createLink(
+      new NextRequest("https://links.example.com/api/links", {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify({ url: "https://links.example.com/abc1234" }),
+      }),
+    );
     expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toBe("Cannot shorten a URL on this domain.");
+  });
+
+  it.each([["host"], ["x-forwarded-host"]])(
+    "refuses its own domain as named by the %s header",
+    async (header) => {
+      const res = await shorten(
+        await newKey(),
+        { url: "https://short.example.com/abc1234" },
+        {
+          [header]: "short.example.com",
+        },
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.message).toBe("Cannot shorten a URL on this domain.");
+    },
+  );
+
+  it("rejects URLs on hosts without a dot, such as localhost", async () => {
+    const res = await shorten(await newKey(), { url: "http://localhost:3000/abc1234" });
+    expect((await res.json()).error.message).toBe("✖ Invalid URL\n  → at url");
   });
 
   it("rate limits link creation per key", async () => {
