@@ -256,6 +256,24 @@ npm run test:k6      # terminal 2: BASE_URL defaults to http://localhost:3000
 
 The suite writes data and deliberately uses up rate limits, so it refuses to run against production. `dev:memory` ignores the Redis credentials in `.env.local`, so it never touches production data.
 
+## Tracing
+
+The app is instrumented with OpenTelemetry via [`@vercel/otel`](https://www.npmjs.com/package/@vercel/otel) (`instrumentation.ts`). On Vercel, traces appear in the project's built-in trace view, which is included in the Hobby plan with short retention.
+
+Besides Next.js's own request spans and outgoing `fetch` calls (Upstash's REST requests), the app adds:
+
+| Span                                          | Attributes                                                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `redis GET`, `redis SET`, … (each KV command) | `db.system.name`, `db.operation.name`, `db.operation.batch.size`, `app.kv.key_prefix`, `app.kv.store` |
+| `ratelimit <policy>`                          | `app.ratelimit.policy`, `.store`, `.success`, `.limit`, `.remaining`                                  |
+
+Spans record key prefixes (`link`, `apikey`) rather than full keys, and never API keys or client IPs; `test/tracing.test.ts` enforces this. Search recent spans from the CLI:
+
+```sh
+vercel traces search --columns span.startTime,span.duration,span.name,span.status.code
+vercel traces search --status error
+```
+
 ## Development
 
 ```sh
