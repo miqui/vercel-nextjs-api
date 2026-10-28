@@ -6,3 +6,4 @@ next-env.d.ts
 .agents
 .claude
 skills-lock.json
+k6/openapi.json

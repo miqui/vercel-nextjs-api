@@ -12,6 +12,19 @@ const CreateLinkBody = z.object({
     .optional(),
 });
 
+/**
+ * Every host name this request may have reached the service by. `request.url` alone isn't
+ * enough: behind proxies, and in `next dev`, it can differ from the name the client used.
+ */
+function serviceHosts(request: Request): Set<string> {
+  const hosts = [
+    new URL(request.url).host,
+    request.headers.get("host"),
+    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim(),
+  ];
+  return new Set(hosts.filter((host): host is string => !!host).map((host) => host.toLowerCase()));
+}
+
 function shortUrl(request: Request, code: string): string {
   return new URL(`/${code}`, request.url).toString();
 }
@@ -39,7 +52,7 @@ export async function POST(request: Request) {
   }
 
   // Pointing a short link at this service would allow redirect loops.
-  if (new URL(parsed.data.url).host === new URL(request.url).host) {
+  if (serviceHosts(request).has(new URL(parsed.data.url).host.toLowerCase())) {
     return errorResponse(400, "bad_request", "Cannot shorten a URL on this domain.", guard.headers);
   }
 

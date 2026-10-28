@@ -43,6 +43,29 @@ jobs:
           path: coverage/
           retention-days: 7
 
+  api-examples:
+    name: API examples (k6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: grafana/setup-k6-action@v1
+      - name: Start the API with the in-memory store
+        run: |
+          npm run dev:memory > dev.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/ && exit 0; sleep 1; done
+          cat dev.log; exit 1
+      - name: Run every OpenAPI example against the API
+        run: npm run test:k6
+      - name: Server log
+        if: failure()
+        run: cat dev.log
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
