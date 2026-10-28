@@ -1,5 +1,6 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { getRedis } from "./kv";
+import { withSpan } from "./tracing";
 
 export type RateLimitResult = {
   success: boolean;
@@ -70,9 +71,29 @@ export function resetMemoryRateLimits(): void {
   delete globalStore.__memoryRateLimits;
 }
 
-export async function rateLimit(name: PolicyName, identifier: string): Promise<RateLimitResult> {
+/**
+ * Applies a rate limit policy to `identifier`, in a `ratelimit <policy>` span. The span
+ * records the policy and outcome, not the identifier, which is a client IP or key ID.
+ */
+export function rateLimit(name: PolicyName, identifier: string): Promise<RateLimitResult> {
   const limiter = upstashLimiter(name);
-  if (!limiter) return memoryLimit(name, identifier);
-  const { success, limit, remaining, reset } = await limiter.limit(identifier);
-  return { success, limit, remaining, reset };
+  return withSpan(
+    `ratelimit ${name}`,
+    { "app.ratelimit.policy": name, "app.ratelimit.store": limiter ? "upstash" : "memory" },
+    async (span) => {
+      let result: RateLimitResult;
+      if (limiter) {
+        const { success, limit, remaining, reset } = await limiter.limit(identifier);
+        result = { success, limit, remaining, reset };
+      } else {
+        result = memoryLimit(name, identifier);
+      }
+      span.setAttributes({
+        "app.ratelimit.success": result.success,
+        "app.ratelimit.limit": result.limit,
+        "app.ratelimit.remaining": result.remaining,
+      });
+      return result;
+    },
+  );
 }

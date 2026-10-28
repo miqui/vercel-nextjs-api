@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import { withSpan } from "./tracing";
 
 /** The subset of Redis commands the app uses, so storage can be swapped in tests and local dev. */
 export interface KV {
@@ -95,14 +96,48 @@ export function resetMemoryKV(): void {
   delete globalStore.__memoryKV;
 }
 
-/** Upstash Redis when configured; an in-memory store for local dev and tests. */
+type Store = "upstash" | "memory";
+
+/** `link:abc` -> `link`. Spans record key prefixes, not keys, which embed codes and key hashes. */
+function keyPrefix(key: string | undefined): string {
+  return key?.split(":")[0] ?? "";
+}
+
+/** Wraps every KV command in a `redis <COMMAND>` span. */
+export function tracedKV(kv: KV, store: Store): KV {
+  const span = <T>(operation: string, keys: string[], run: () => Promise<T>) =>
+    withSpan(
+      `redis ${operation}`,
+      {
+        "db.system.name": "redis",
+        "db.operation.name": operation,
+        "db.operation.batch.size": keys.length,
+        "app.kv.key_prefix": keyPrefix(keys[0]),
+        "app.kv.store": store,
+      },
+      run,
+    );
+
+  return {
+    get: (key) => span("GET", [key], () => kv.get(key)),
+    mget: (keys) => span("MGET", keys, () => kv.mget(keys)),
+    set: (key, value, opts) => span("SET", [key], () => kv.set(key, value, opts)),
+    del: (keys) => span("DEL", keys, () => kv.del(keys)),
+    incr: (key) => span("INCR", [key], () => kv.incr(key)),
+    sadd: (key, member) => span("SADD", [key], () => kv.sadd(key, member)),
+    srem: (key, member) => span("SREM", [key], () => kv.srem(key, member)),
+    smembers: (key) => span("SMEMBERS", [key], () => kv.smembers(key)),
+  };
+}
+
+/** Upstash Redis when configured; an in-memory store for local dev and tests. Both are traced. */
 export function getKV(): KV {
   const client = getRedis();
-  if (client) return upstashKV(client);
+  if (client) return tracedKV(upstashKV(client), "upstash");
   if (process.env.NODE_ENV === "production") {
     throw new Error(
       "Redis is not configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or KV_REST_API_URL and KV_REST_API_TOKEN).",
     );
   }
-  return memoryKV();
+  return tracedKV(memoryKV(), "memory");
 }
