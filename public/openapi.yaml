@@ -84,7 +84,7 @@ paths:
             examples:
               named:
                 summary: Key with a name
-                dataValue:
+                value:
                   name: my-cli
       responses:
         "201":
@@ -104,7 +104,7 @@ paths:
               examples:
                 created:
                   summary: Newly issued key
-                  dataValue:
+                  value:
                     key: sk_3hT9xQ2mVb7LkP4nW8cR1sY6fJ0dZ5aE
                     id: key_8f3a2c1d9e7b6a54
                     name: my-cli
@@ -127,7 +127,7 @@ paths:
               examples:
                 emptyName:
                   summary: Empty name
-                  dataValue:
+                  value:
                     error:
                       code: bad_request
                       message: "✖ Too small: expected string to have >=1 characters\n  → at name"
@@ -162,7 +162,7 @@ paths:
               examples:
                 twoLinks:
                   summary: Two links
-                  dataValue:
+                  value:
                     links:
                       - code: Xk9pQ2r
                         url: https://nextjs.org/docs/app
@@ -178,7 +178,7 @@ paths:
                         shortUrl: https://vercel-nextjs-api.vercel.app/docs
                 empty:
                   summary: No links yet
-                  dataValue:
+                  value:
                     links: []
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -205,12 +205,12 @@ paths:
             examples:
               customCode:
                 summary: With a custom code
-                dataValue:
+                value:
                   url: https://vercel.com/docs
                   code: docs
               generatedCode:
                 summary: With a generated code
-                dataValue:
+                value:
                   url: https://nextjs.org/docs/app
       responses:
         "201":
@@ -230,7 +230,7 @@ paths:
               examples:
                 customCode:
                   summary: Custom code
-                  dataValue:
+                  value:
                     code: docs
                     url: https://vercel.com/docs
                     ownerId: key_8f3a2c1d9e7b6a54
@@ -239,7 +239,7 @@ paths:
                     shortUrl: https://vercel-nextjs-api.vercel.app/docs
                 generatedCode:
                   summary: Generated code
-                  dataValue:
+                  value:
                     code: Xk9pQ2r
                     url: https://nextjs.org/docs/app
                     ownerId: key_8f3a2c1d9e7b6a54
@@ -266,19 +266,19 @@ paths:
               examples:
                 invalidUrl:
                   summary: Not an http(s) URL
-                  dataValue:
+                  value:
                     error:
                       code: bad_request
                       message: "✖ Invalid URL\n  → at url"
                 invalidCode:
                   summary: Code too short
-                  dataValue:
+                  value:
                     error:
                       code: bad_request
                       message: "✖ Code must be 3-32 characters: letters, digits, '-' or '_'.\n  → at code"
                 ownDomain:
                   summary: URL on this domain
-                  dataValue:
+                  value:
                     error:
                       code: bad_request
                       message: Cannot shorten a URL on this domain.
@@ -301,7 +301,7 @@ paths:
               examples:
                 taken:
                   summary: Code in use
-                  dataValue:
+                  value:
                     error:
                       code: conflict
                       message: The code "docs" is already taken.
@@ -338,7 +338,7 @@ paths:
               examples:
                 clicked:
                   summary: Link clicked twice
-                  dataValue:
+                  value:
                     code: docs
                     url: https://vercel.com/docs
                     ownerId: key_8f3a2c1d9e7b6a54
@@ -478,13 +478,13 @@ components:
           examples:
             missing:
               summary: No key sent
-              dataValue:
+              value:
                 error:
                   code: unauthorized
                   message: "Missing API key. Send `Authorization: Bearer <key>`."
             invalid:
               summary: Unknown key
-              dataValue:
+              value:
                 error:
                   code: unauthorized
                   message: Invalid API key.
@@ -505,7 +505,7 @@ components:
           examples:
             notFound:
               summary: Unknown or not yours
-              dataValue:
+              value:
                 error:
                   code: not_found
                   message: Link not found.
@@ -519,7 +519,7 @@ components:
           examples:
             notFound:
               summary: Unknown code
-              dataValue:
+              value:
                 error:
                   code: not_found
                   message: Link not found.
@@ -542,7 +542,7 @@ components:
           examples:
             rateLimited:
               summary: Over the limit
-              dataValue:
+              value:
                 error:
                   code: rate_limited
                   message: Too many requests. Try again later.

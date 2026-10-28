@@ -52,6 +52,11 @@ describe("OpenAPI spec", () => {
     expect(spec.info.description).toContain(`| ${manage.requests} per minute |`);
   });
 
+  it("uses `value` in examples, which API tools understand, not 3.2's `dataValue`", () => {
+    const raw = readFileSync(join(ROOT, "public/openapi.yaml"), "utf8");
+    expect(raw).not.toMatch(/^\s*(dataValue|serializedValue):/m);
+  });
+
   it("lists every error code the API can return", () => {
     const source = readFileSync(join(ROOT, "lib/http.ts"), "utf8");
     const codes = source.match(/export type ErrorCode =([^;]+);/)![1].match(/"([a-z_]+)"/g)!;
