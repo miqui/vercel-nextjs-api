@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agent skills installed locally by marketplace integrations
+/.agents/
+/.claude/skills/
+/skills-lock.json

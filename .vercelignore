@@ -1,0 +1,6 @@
+# Never upload local agent tooling with `vercel deploy`
+.agents
+.claude/skills
+skills-lock.json
+.env*
+coverage
